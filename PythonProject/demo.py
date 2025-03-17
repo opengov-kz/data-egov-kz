@@ -7,30 +7,19 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 import requests
 
-# Ваш API-ключ от 2Captcha
 API_KEY = "324aa0a952ad40f2834502df3ecd5727"
 
-# Автоматическая установка и настройка драйвера
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service)
-
-# Функция для решения reCAPTCHA с помощью 2Captcha
 def solve_recaptcha(site_key, page_url):
     try:
-        # Шаг 1: Отправляем запрос на решение reCAPTCHA
         response = requests.post(
             f"http://2captcha.com/in.php?key={API_KEY}&method=userrecaptcha&googlekey={site_key}&pageurl={page_url}"
         ).text
-
-        # Проверяем ответ от 2Captcha
         if "ERROR" in response:
             print(f"Ошибка от 2Captcha: {response}")
             return None
-
-        # Извлекаем ID капчи
         captcha_id = response.split("|")[1]
-
-        # Шаг 2: Ожидаем решения
         solution = None
         while True:
             response = requests.get(f"http://2captcha.com/res.php?key={API_KEY}&action=get&id={captcha_id}").text
@@ -48,28 +37,24 @@ def solve_recaptcha(site_key, page_url):
         print(f"Ошибка в функции solve_recaptcha: {e}")
         return None
 
-# Функция для обхода reCAPTCHA на странице
+
 def bypass_recaptcha(driver):
     try:
-        # Находим ключ reCAPTCHA на странице
         site_key = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '.g-recaptcha'))
         ).get_attribute('data-sitekey')
         page_url = driver.current_url
 
-        # Решаем reCAPTCHA
         solution = solve_recaptcha(site_key, page_url)
         if not solution:
             print("Не удалось решить reCAPTCHA")
             return
 
-        # Вводим решение reCAPTCHA в скрытое поле
         driver.execute_script(
             f'document.getElementById("g-recaptcha-response").innerHTML="{solution}";'
         )
         time.sleep(2)
 
-        # Нажимаем кнопку отправки формы (если есть)
         submit_button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[type="submit"]'))
         )
@@ -103,7 +88,7 @@ def main():
                 print("Обнаружена reCAPTCHA, решаем...")
                 bypass_recaptcha(driver)
 
-            # Получаем данные со страницы (например, ссылку на API)
+            # Получаем данные со страницы (ссылку на API)
             try:
                 api_link = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="api"]'))
@@ -115,7 +100,6 @@ def main():
     except Exception as e:
         print(f"Ошибка в основной функции: {e}")
     finally:
-        # Закрываем браузер
         driver.quit()
 
 if __name__ == "__main__":
