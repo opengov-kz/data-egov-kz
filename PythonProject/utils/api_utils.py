@@ -1,7 +1,6 @@
 import requests
 from config import API_KEY, HEADERS
 
-
 def get_api_data(api_url):
     try:
 

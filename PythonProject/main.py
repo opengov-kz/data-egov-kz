@@ -42,7 +42,7 @@ def main():
         all_data = []
         current_page = 1
 
-        while current_page <= 15:  # Собираем данные до 15-й страницы
+        while True:  # Continue until there's no next pag
             dataset_links = []
             for a in driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]'):
                 href = a.get_attribute('href')
@@ -73,8 +73,11 @@ def main():
                     print(f"Ссылка на API не найдена: {e}")
 
             if not go_to_next_page(driver, current_page):
+                print("Достигнут конец страниц или ошибка при переходе.")
                 break
+
             current_page += 1
+            time.sleep(3)
 
         if all_data:
             df = pd.json_normalize(all_data[:50])
