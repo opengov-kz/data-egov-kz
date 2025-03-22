@@ -35,7 +35,7 @@ def get_data_link(driver, dataset_url, max_retries=3):
 
         except sel_exceptions.TimeoutException:
             try:
-                # Check for alternative link structure
+
                 data_link_element = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located(
                         (By.XPATH, "//td[a[contains(@href, 'https://data.egov.kz/proxy/')]]/a")
@@ -52,12 +52,12 @@ def get_data_link(driver, dataset_url, max_retries=3):
                     if not driver:
                         return None
                 else:
-                    return None  # Return None if max retries reached
+                    return None
 
         except sel_exceptions.WebDriverException as e:
             if "502 Bad Gateway" in str(e) or "Stacktrace" in str(e):
                 logging.error(f"Encountered error: {e}. Restarting Chrome and retrying...")
-                driver = restart_chrome()  # Restart Chrome and retry
+                driver = restart_chrome()
                 if not driver:
                     return None
             else:
@@ -74,9 +74,8 @@ def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
         search_url = f"{base_url}/datasets/search?text=&expType=1&govAgencyId={gov_agency_id}&category=&pDateBeg=&pDateEnd=&statusType=1&actualType=&datasetSortSelect=createdDateDesc&page={current_page}"
         try:
             driver.get(search_url)
-            time.sleep(3)  # Wait for the page to load
+            time.sleep(3)
 
-            # Debugging: Print the page source to check if the datasets are present
             print(f"Page source for {search_url}:")
             print(driver.page_source[:1000])  # Print the first 1000 characters of the page source
 
@@ -84,7 +83,7 @@ def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
                           driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]')]
             if not page_links:
                 print(f"No dataset links found on page {current_page} for govAgency {gov_agency_id}.")
-                break  # Stop if no new links found
+                break
 
             for dataset_link in page_links:
                 print(f"Navigating to dataset: {dataset_link}")
@@ -95,12 +94,12 @@ def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
                 else:
                     print(f"No data link found for {dataset_link}. Skipping...")
 
-            current_page += 1  # Move to the next page
+            current_page += 1
 
         except sel_exceptions.WebDriverException as e:
             if "502 Bad Gateway" in str(e) or "Stacktrace" in str(e):
                 logging.error(f"Encountered error: {e}. Restarting Chrome and retrying...")
-                driver = restart_chrome()  # Restart Chrome and retry
+                driver = restart_chrome()
                 if not driver:
                     return None
             else:

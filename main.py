@@ -8,13 +8,11 @@ from config import BASE_URL, CGO_DATASOURCE, MIO_DATASOURCE, QUASIORG_DATASOURCE
 from webdriver_manager.chrome import ChromeDriverManager
 from utils.selenium_utils import get_data_link, get_dataset_links, restart_chrome
 
-# Configure logging
 logging.basicConfig(
     filename="logs/error.log",
     level=logging.ERROR,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
 
 def load_gov_agencies(json_file):
     """Load govAgency values from a JSON file."""
@@ -33,7 +31,6 @@ def replace_api_key_in_link(link):
 def save_data_link(output_csv, dataset_link, data_link):
     """Save the dataset link and data link to the corresponding CSV file."""
     try:
-        # Replace 'yourApiKey' in the data link with the actual API key
         data_link = replace_api_key_in_link(data_link)
 
         df = pd.DataFrame([{"Dataset URL": dataset_link, "Data Link": data_link}])
@@ -48,7 +45,6 @@ def main():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service)
 
-        # Define JSON files and their corresponding output CSV file names
         json_files = {
             CGO_DATASOURCE: "data/byCGO.csv",
             MIO_DATASOURCE: "data/byMIO.csv",
@@ -68,7 +64,7 @@ def main():
                         if dataset_links:
                             for dataset in dataset_links:
                                 save_data_link(output_csv, dataset["Dataset URL"], dataset["Data Link"])
-                            break  # Exit the retry loop if data is successfully collected
+                            break
                         else:
                             print(f"No data links found for govAgency {gov_agency}.")
                             break
@@ -76,8 +72,8 @@ def main():
                         retries += 1
                         if retries < max_retries:
                             print(f"Restarting Chrome and retrying govAgency {gov_agency} (attempt {retries + 1})...")
-                            driver.quit()  # Quit the current driver
-                            driver = restart_chrome()  # Restart Chrome
+                            driver.quit()
+                            driver = restart_chrome()
                             if not driver:
                                 logging.error("Failed to restart Chrome. Exiting...")
                                 return
