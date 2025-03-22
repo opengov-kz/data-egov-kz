@@ -7,4 +7,4 @@ HEADERS = {
 }
 CGO_DATASOURCE = "datasources/getstatisticsbycgogovagencies.json"
 MIO_DATASOURCE = "datasources/getstatisticsbymiogovagencies.json"
-QUASIORG_DATASOURCE = "datasources/getstatisticsbyquasiorgagencies.json"
+QUASIORG_DATASOURCE = "datasources/getstatisticsbyquasiorganizations.json"

@@ -1,18 +1,12 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import time
 import pandas as pd
 import logging
 import json
 from config import BASE_URL, CGO_DATASOURCE, MIO_DATASOURCE, QUASIORG_DATASOURCE
 from webdriver_manager.chrome import ChromeDriverManager
-import random
-import selenium.common.exceptions as sel_exceptions
-
-from utils.api_utils import get_api_data
+from utils.selenium_utils import get_data_link, get_dataset_links, restart_chrome
 
 # Configure logging
 logging.basicConfig(
@@ -21,106 +15,77 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-
 def load_gov_agencies(json_file):
     """Load govAgency values from a JSON file."""
     with open(json_file, 'r', encoding='utf-8') as file:
         data = json.load(file)
     return [item['govAgency'] for item in data]
 
+def replace_api_key(file_path):
+    """Replace 'yourApiKey' with 'API_KEY' in config.py"""
+    with open(file_path, 'r', encoding='utf-8') as file:
+        config_data = file.read()
+    config_data = config_data.replace("yourApiKey", "API_KEY")
+    with open(file_path, 'w', encoding='utf-8') as file:
+        file.write(config_data)
 
-def get_data_link(driver, dataset_url):
-    """Extract the data link from a dataset page with retry mechanism."""
-    retries = 3
-    for attempt in range(retries):
-        try:
-            driver.get(dataset_url)
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, 'a[target="_blank"][href*="https://data.egov.kz/api/v4/"]')
-                )
-            )
-            data_link_element = driver.find_element(By.CSS_SELECTOR,
-                                                    'a[target="_blank"][href*="https://data.egov.kz/api/v4/"]')
-            return data_link_element.get_attribute('href')
-
-        except sel_exceptions.TimeoutException:
-            try:
-                # Alternative search based on image provided
-                data_link_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, "//td[b[contains(text(), 'Ссылка на сервис')]]/following-sibling::td/a")
-                    )
-                )
-                return data_link_element.get_attribute('href')
-
-            except Exception as e:
-                logging.error(f"Data link not found for {dataset_url}: {e}")
-
-        except sel_exceptions.WebDriverException as e:
-            if "502 Bad Gateway" in str(e) and attempt < retries - 1:
-                wait_time = random.randint(5, 15)  # Random wait to avoid detection
-                print(f"502 Bad Gateway encountered. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"Failed after {retries} attempts for {dataset_url}: {e}")
-                return None
-
-
-def get_dataset_links(driver, base_url, gov_agency_id):
-    """Collect dataset links page by page until no datasets remain."""
-    dataset_links = []
-    current_page = 1
-
-    while True:
-        search_url = f"{base_url}/datasets/search?text=&expType=1&govAgencyId={gov_agency_id}&category=&pDateBeg=&pDateEnd=&statusType=1&actualType=&datasetSortSelect=createdDateDesc&page={current_page}"
-        driver.get(search_url)
-        time.sleep(3)  # Wait for the page to load
-
-        # Extract dataset links from the current page
-        page_links = [a.get_attribute('href') for a in
-                      driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]')]
-        if not page_links:
-            break  # Stop if no new links found
-
-        for dataset_link in page_links:
-            print(f"Navigating to dataset: {dataset_link}")
-            data_link = get_data_link(driver, dataset_link)
-            if data_link:
-                dataset_links.append({"Dataset URL": dataset_link, "Data Link": data_link})
-                print(f"Extracted Data Link: {data_link}")
-
-        current_page += 1  # Move to the next page
-
-    return dataset_links
-
+def save_data_link(output_csv, dataset_link, data_link):
+    """Save the dataset link and data link to the corresponding CSV file."""
+    try:
+        df = pd.DataFrame([{"Dataset URL": dataset_link, "Data Link": data_link}])
+        df.to_csv(output_csv, mode='a', index=False, header=not pd.io.common.file_exists(output_csv), encoding='utf-8')
+        print(f"Data saved to {output_csv}")
+    except Exception as e:
+        logging.error(f"Error saving data to {output_csv}: {e}")
 
 def main():
     try:
+        replace_api_key("config.py")  # Replace API Key in config.py
+
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service)
 
-        json_files = [CGO_DATASOURCE, MIO_DATASOURCE, QUASIORG_DATASOURCE]
-        all_data_links = []
+        # Define JSON files and their corresponding output CSV file names
+        json_files = {
+            CGO_DATASOURCE: "data/byCGO.csv",
+            MIO_DATASOURCE: "data/byMIO.csv",
+            QUASIORG_DATASOURCE: "data/byQuasiOrg.csv"
+        }
 
-        for json_file in json_files:
+        for json_file, output_csv in json_files.items():
             gov_agencies = load_gov_agencies(json_file)
+
             for gov_agency in gov_agencies:
                 print(f"Processing govAgency: {gov_agency}")
-                all_data_links.extend(get_dataset_links(driver, BASE_URL, gov_agency))
-
-        if all_data_links:
-            df = pd.DataFrame(all_data_links)
-            df.to_csv("data/all_data_links.csv", index=False, encoding='utf-8')
-            print("All data links saved to data/all_data_links.csv")
-        else:
-            print("No data links were extracted.")
+                retries = 0
+                max_retries = 3
+                while retries < max_retries:
+                    try:
+                        dataset_links = get_dataset_links(driver, BASE_URL, gov_agency)
+                        if dataset_links:
+                            for dataset in dataset_links:
+                                save_data_link(output_csv, dataset["Dataset URL"], dataset["Data Link"])
+                            break  # Exit the retry loop if data is successfully collected
+                        else:
+                            print(f"No data links found for govAgency {gov_agency}.")
+                            break
+                    except Exception as e:
+                        retries += 1
+                        if retries < max_retries:
+                            print(f"Restarting Chrome and retrying govAgency {gov_agency} (attempt {retries + 1})...")
+                            driver.quit()  # Quit the current driver
+                            driver = restart_chrome()  # Restart Chrome
+                            if not driver:
+                                logging.error("Failed to restart Chrome. Exiting...")
+                                return
+                        else:
+                            print(f"Max retries reached for govAgency {gov_agency}. Skipping...")
+                            break
 
     except Exception as e:
         logging.error(f"Error in main function: {e}")
     finally:
         driver.quit()
-
 
 if __name__ == "__main__":
     main()
