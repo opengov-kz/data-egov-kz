@@ -76,9 +76,14 @@ def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
             driver.get(search_url)
             time.sleep(3)  # Wait for the page to load
 
+            # Debugging: Print the page source to check if the datasets are present
+            print(f"Page source for {search_url}:")
+            print(driver.page_source[:1000])  # Print the first 1000 characters of the page source
+
             page_links = [a.get_attribute('href') for a in
                           driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]')]
             if not page_links:
+                print(f"No dataset links found on page {current_page} for govAgency {gov_agency_id}.")
                 break  # Stop if no new links found
 
             for dataset_link in page_links:

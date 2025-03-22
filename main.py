@@ -4,7 +4,7 @@ import time
 import pandas as pd
 import logging
 import json
-from config import BASE_URL, CGO_DATASOURCE, MIO_DATASOURCE, QUASIORG_DATASOURCE
+from config import BASE_URL, CGO_DATASOURCE, MIO_DATASOURCE, QUASIORG_DATASOURCE, API_KEY
 from webdriver_manager.chrome import ChromeDriverManager
 from utils.selenium_utils import get_data_link, get_dataset_links, restart_chrome
 
@@ -15,33 +15,36 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+
 def load_gov_agencies(json_file):
     """Load govAgency values from a JSON file."""
     with open(json_file, 'r', encoding='utf-8') as file:
         data = json.load(file)
     return [item['govAgency'] for item in data]
 
-def replace_api_key(file_path):
-    """Replace 'yourApiKey' with 'API_KEY' in config.py"""
-    with open(file_path, 'r', encoding='utf-8') as file:
-        config_data = file.read()
-    config_data = config_data.replace("yourApiKey", "API_KEY")
-    with open(file_path, 'w', encoding='utf-8') as file:
-        file.write(config_data)
+
+def replace_api_key_in_link(link):
+    """Replace 'yourApiKey' in the link with the actual API key."""
+    if link and "yourApiKey" in link:
+        return link.replace("yourApiKey", API_KEY)
+    return link
+
 
 def save_data_link(output_csv, dataset_link, data_link):
     """Save the dataset link and data link to the corresponding CSV file."""
     try:
+        # Replace 'yourApiKey' in the data link with the actual API key
+        data_link = replace_api_key_in_link(data_link)
+
         df = pd.DataFrame([{"Dataset URL": dataset_link, "Data Link": data_link}])
         df.to_csv(output_csv, mode='a', index=False, header=not pd.io.common.file_exists(output_csv), encoding='utf-8')
         print(f"Data saved to {output_csv}")
     except Exception as e:
         logging.error(f"Error saving data to {output_csv}: {e}")
 
+
 def main():
     try:
-        replace_api_key("config.py")  # Replace API Key in config.py
-
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service)
 
@@ -86,6 +89,7 @@ def main():
         logging.error(f"Error in main function: {e}")
     finally:
         driver.quit()
+
 
 if __name__ == "__main__":
     main()
