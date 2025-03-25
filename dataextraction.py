@@ -1,102 +1,123 @@
 import pandas as pd
-import requests
 import logging
-import json
-import os
 from tqdm import tqdm
-
-os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    filename="logs/extraction_debug.log",
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+import os
+from utils.api_utils import fetch_api_data
 
 
-def extract_data_from_link(data_link):
-    try:
-        logging.debug(f"Fetching: {data_link}")
-        response = requests.get(data_link, timeout=15)
-        logging.debug(f"Response status: {response.status_code}")
-        logging.debug(f"Headers: {response.headers}")
+class DataExtractor:
+    def __init__(self):
+        self.all_columns = set()
+        self.valid_count = 0
+        self.error_count = 0
 
-        sample_response = response.text[:200]
-        logging.debug(f"Response sample: {sample_response}")
+    def extract_records(self, data):
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            if 'data' in data and isinstance(data['data'], list):
+                return data['data']
+            return [data]
+        return []
 
-        response.raise_for_status()
+    def process_dataset(self, input_csv, output_csv):
+        if not os.path.exists(input_csv):
+            logging.error(f"Input file not found: {input_csv}")
+            return False
 
         try:
-            data = response.json()
-            logging.debug(
-                f"Parsed JSON keys: {data.keys() if isinstance(data, dict) else 'List length: ' + str(len(data))}")
-            return data
-        except json.JSONDecodeError:
-            logging.warning(f"Non-JSON response: {sample_response}")
-            return None
+            df = pd.read_csv(input_csv, encoding='utf-8')
+            if 'Data Link' not in df.columns:
+                logging.error("Missing 'Data Link' column")
+                return False
 
-    except Exception as e:
-        logging.error(f"Error fetching {data_link}: {str(e)}", exc_info=True)
-        return None
+            all_records = []
+
+            with tqdm(total=len(df), desc=f"Processing {os.path.basename(input_csv)}") as pbar:
+                for _, row in df.iterrows():
+                    if pd.isna(row['Data Link']):
+                        pbar.update(1)
+                        continue
+
+                    result = fetch_api_data(row['Data Link'])
+                    if result['status'] == 'success':
+                        records = self.extract_records(result['data'])
+                        for record in records:
+                            record['source_url'] = result['source_url']
+                            all_records.append(record)
+                            self.all_columns.update(record.keys())
+                        self.valid_count += len(records)
+                    else:
+                        self.error_count += 1
+                    pbar.update(1)
+
+            if all_records:
+                final_df = pd.DataFrame(all_records)
+
+                final_df.to_csv(
+                    output_csv,
+                    index=False,
+                    encoding='utf-8-sig',
+                    escapechar='\\',
+                    quotechar='"',
+                    quoting=csv.QUOTE_NONNUMERIC
+                )
+
+                logging.info(f"Saved {len(final_df)} records to {output_csv}")
+                print(f"\nSample output:\n{final_df.head(3).to_string(index=False)}")
+
+            return True
+
+        except Exception as e:
+            logging.error(f"Error processing {input_csv}: {str(e)}")
+            return False
 
 
 def main():
-    print("Debug mode activated. Checking data sources...")
+    print("Unicode-Compatible Data Extractor")
+    print("--------------------------------")
 
-    TEST_URL = "https://data.egov.kz/api/v4/gov_agency_example?apiKey=dcc32505f6134b818ec7ce60b1d5b0c6"  # Replace with a real endpoint
-    print(f"\nTesting with sample URL: {TEST_URL}")
-    test_data = extract_data_from_link(TEST_URL)
-    print(f"Test response: {str(test_data)[:200]}...")
+    extractor = DataExtractor()
+    os.makedirs('results/', exist_ok=True)
 
-    if test_data is None:
-        print("\n⚠️  WARNING: Failed to fetch test URL. Check API connectivity.")
-        return
+    while True:
+        print("\nAvailable datasets:")
+        print("1. byCGO")
+        print("2. byMIO")
+        print("3. byQuasiOrg")
+        print("4. Exit")
 
-    choice = input("\nProceed with extraction? Enter dataset number (1-3) or 'q' to quit: ")
-    if choice.lower() == 'q':
-        return
+        choice = input("Select dataset (1-4): ").strip()
 
-    file_map = {
-        "1": ("data/byCGO.csv", "data/extracted_byCGO_debug.csv"),
-        "2": ("data/byMIO.csv", "data/extracted_byMIO_debug.csv"),
-        "3": ("data/byQuasiOrg.csv", "data/extracted_byQuasiOrg_debug.csv")
-    }
+        file_map = {
+            '1': ('data/byCGO.csv', 'results/byCGO_utf8.csv'),
+            '2': ('data/byMIO.csv', 'results/byMIO_utf8.csv'),
+            '3': ('data/byQuasiOrg.csv', 'results/byQuasiOrg_utf8.csv')
+        }
 
-    if choice not in file_map:
-        print("Invalid choice.")
-        return
-
-    input_csv, output_csv = file_map[choice]
-
-    if not os.path.exists(input_csv):
-        logging.error(f"Input file missing: {input_csv}")
-        print(f"Error: {input_csv} not found!")
-        return
-
-    try:
-        df = pd.read_csv(input_csv)
-        print(f"\nFound {len(df)} records in {input_csv}")
-        print("Sample Data Link:", df['Data Link'].iloc[0] if 'Data Link' in df.columns else "NO 'Data Link' COLUMN!")
-    except Exception as e:
-        logging.error(f"CSV read error: {e}", exc_info=True)
-        print("Failed to read CSV. Check format.")
-        return
-
-    extracted_data = []
-    for i, row in tqdm(df.iterrows(), total=len(df)):
-        link = row.get('Data Link')
-        if pd.isna(link):
-            continue
-
-        data = extract_data_from_link(link)
-        if data:
-            extracted_data.append({"url": link, "data": data})
-
-    if extracted_data:
-        pd.DataFrame(extracted_data).to_csv(output_csv, index=False)
-        print(f"\n Saved {len(extracted_data)} records to {output_csv}")
-    else:
-        print("\n No valid data extracted. Check debug.log")
+        if choice == '4':
+            break
+        elif choice in file_map:
+            input_file, output_file = file_map[choice]
+            if extractor.process_dataset(input_file, output_file):
+                print(f"\nSuccess: {extractor.valid_count} records")
+                if extractor.error_count > 0:
+                    print(f"Errors: {extractor.error_count}")
+            else:
+                print("Processing failed")
+        else:
+            print("Invalid choice")
 
 
 if __name__ == "__main__":
+    import csv
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('data_extraction_unicode.log', encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
     main()

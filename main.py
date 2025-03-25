@@ -15,21 +15,19 @@ logging.basicConfig(
 )
 
 def load_gov_agencies(json_file):
-    """Load govAgency values from a JSON file."""
+
     with open(json_file, 'r', encoding='utf-8') as file:
         data = json.load(file)
     return [item['govAgency'] for item in data]
 
 
 def replace_api_key_in_link(link):
-    """Replace 'yourApiKey' in the link with the actual API key."""
     if link and "yourApiKey" in link:
         return link.replace("yourApiKey", API_KEY)
     return link
 
 
 def save_data_link(output_csv, dataset_link, data_link):
-    """Save the dataset link and data link to the corresponding CSV file."""
     try:
         data_link = replace_api_key_in_link(data_link)
 

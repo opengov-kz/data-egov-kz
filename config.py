@@ -1,4 +1,3 @@
-# config.py
 API_KEY = "dcc32505f6134b818ec7ce60b1d5b0c6"
 BASE_URL = "https://data.egov.kz"
 LIST_URL = "https://data.egov.kz/search"

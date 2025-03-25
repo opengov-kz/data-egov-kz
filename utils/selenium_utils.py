@@ -66,7 +66,6 @@ def get_data_link(driver, dataset_url, max_retries=3):
     return None
 
 def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
-    """Collect dataset links page by page until no datasets remain."""
     dataset_links = []
     current_page = 1
 
@@ -77,7 +76,7 @@ def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
             time.sleep(3)
 
             print(f"Page source for {search_url}:")
-            print(driver.page_source[:1000])  # Print the first 1000 characters of the page source
+            print(driver.page_source[:1000])
 
             page_links = [a.get_attribute('href') for a in
                           driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]')]
