@@ -2,25 +2,64 @@ import pandas as pd
 import logging
 from tqdm import tqdm
 import os
+import csv
+import re
 from utils.api_utils import fetch_api_data
 
 
-class DataExtractor:
+class AgencyDatasetExtractor:
     def __init__(self):
-        self.all_columns = set()
-        self.valid_count = 0
-        self.error_count = 0
+        self.base_output_dir = 'results/datasets'
+        os.makedirs(self.base_output_dir, exist_ok=True)
 
-    def extract_records(self, data):
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict):
-            if 'data' in data and isinstance(data['data'], list):
-                return data['data']
-            return [data]
-        return []
+    def create_agency_folder(self, gov_agency):
+        """Create a safe folder name from government agency"""
+        # Remove special characters and replace spaces
+        safe_name = re.sub(r'[^\w\s-]', '', gov_agency).strip().replace(' ', '_')
+        folder_path = os.path.join(self.base_output_dir, safe_name)
+        os.makedirs(folder_path, exist_ok=True)
+        return folder_path
 
-    def process_dataset(self, input_csv, output_csv):
+    def save_agency_dataset(self, data, gov_agency, source_url, normalized_url):
+        """Save dataset to its government agency folder"""
+        try:
+            agency_folder = self.create_agency_folder(gov_agency)
+
+            # Extract meaningful filename from URL
+            endpoint = normalized_url.split('?')[0].split('/')[-1] or 'dataset'
+            safe_filename = f"{endpoint[:50]}.csv".replace(' ', '_')
+            output_path = os.path.join(agency_folder, safe_filename)
+
+            # Convert data to DataFrame
+            if isinstance(data, list):
+                df = pd.DataFrame(data)
+            elif isinstance(data, dict):
+                df = pd.DataFrame([data])
+            else:
+                logging.error(f"Unexpected data type: {type(data)}")
+                return False
+
+            # Add metadata columns
+            df['source_url'] = source_url
+            df['api_endpoint'] = normalized_url
+            df['government_agency'] = gov_agency
+
+            # Save to CSV
+            df.to_csv(
+                output_path,
+                index=False,
+                encoding='utf-8-sig',
+                quoting=csv.QUOTE_NONNUMERIC
+            )
+            logging.info(f"Saved dataset to {output_path}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Failed to save dataset: {str(e)}")
+            return False
+
+    def process_agency_data(self, input_csv, gov_agency):
+        """Process CSV file for a specific government agency"""
         if not os.path.exists(input_csv):
             logging.error(f"Input file not found: {input_csv}")
             return False
@@ -31,9 +70,10 @@ class DataExtractor:
                 logging.error("Missing 'Data Link' column")
                 return False
 
-            all_records = []
+            success_count = 0
+            error_count = 0
 
-            with tqdm(total=len(df), desc=f"Processing {os.path.basename(input_csv)}") as pbar:
+            with tqdm(total=len(df), desc=f"Processing {gov_agency} datasets") as pbar:
                 for _, row in df.iterrows():
                     if pd.isna(row['Data Link']):
                         pbar.update(1)
@@ -41,31 +81,22 @@ class DataExtractor:
 
                     result = fetch_api_data(row['Data Link'])
                     if result['status'] == 'success':
-                        records = self.extract_records(result['data'])
-                        for record in records:
-                            record['source_url'] = result['source_url']
-                            all_records.append(record)
-                            self.all_columns.update(record.keys())
-                        self.valid_count += len(records)
+                        if self.save_agency_dataset(
+                                result['data'],
+                                gov_agency,
+                                result['source_url'],
+                                result['normalized_url']
+                        ):
+                            success_count += 1
+                        else:
+                            error_count += 1
                     else:
-                        self.error_count += 1
+                        error_count += 1
                     pbar.update(1)
 
-            if all_records:
-                final_df = pd.DataFrame(all_records)
-
-                final_df.to_csv(
-                    output_csv,
-                    index=False,
-                    encoding='utf-8-sig',
-                    escapechar='\\',
-                    quotechar='"',
-                    quoting=csv.QUOTE_NONNUMERIC
-                )
-
-                logging.info(f"Saved {len(final_df)} records to {output_csv}")
-                print(f"\nSample output:\n{final_df.head(3).to_string(index=False)}")
-
+            print(f"\nProcessed {gov_agency}:")
+            print(f"  Successfully saved {success_count} datasets")
+            print(f"  Failed to process {error_count} URLs")
             return True
 
         except Exception as e:
@@ -74,49 +105,43 @@ class DataExtractor:
 
 
 def main():
-    print("Unicode-Compatible Data Extractor")
-    print("--------------------------------")
+    print("Government Agency Dataset Extractor")
+    print("----------------------------------")
 
-    extractor = DataExtractor()
-    os.makedirs('results/', exist_ok=True)
+    extractor = AgencyDatasetExtractor()
+
+    # Map of government agencies to their CSV files
+    agencies = {
+        'Local executive Organizations': 'data/byMIO.csv',
+        'Central Government Organizations': 'data/byCGO.csv',
+        'Quasi-Government Organizations': 'data/byQuasiOrg.csv'
+    }
 
     while True:
-        print("\nAvailable datasets:")
-        print("1. byCGO")
-        print("2. byMIO")
-        print("3. byQuasiOrg")
-        print("4. Exit")
+        print("\nAvailable government agencies:")
+        for i, (agency, _) in enumerate(agencies.items(), 1):
+            print(f"{i}. {agency}")
+        print(f"{len(agencies) + 1}. Exit")
 
-        choice = input("Select dataset (1-4): ").strip()
-
-        file_map = {
-            '1': ('data/byCGO.csv', 'results/byCGO_utf8.csv'),
-            '2': ('data/byMIO.csv', 'results/byMIO_utf8.csv'),
-            '3': ('data/byQuasiOrg.csv', 'results/byQuasiOrg_utf8.csv')
-        }
+        choice = input("Select agency (1-4): ").strip()
 
         if choice == '4':
             break
-        elif choice in file_map:
-            input_file, output_file = file_map[choice]
-            if extractor.process_dataset(input_file, output_file):
-                print(f"\nSuccess: {extractor.valid_count} records")
-                if extractor.error_count > 0:
-                    print(f"Errors: {extractor.error_count}")
-            else:
-                print("Processing failed")
+        elif choice in ['1', '2', '3']:
+            agency_name = list(agencies.keys())[int(choice) - 1]
+            input_file = agencies[agency_name]
+            if not extractor.process_agency_data(input_file, agency_name):
+                print("Processing failed - check logs")
         else:
             print("Invalid choice")
 
 
 if __name__ == "__main__":
-    import csv
-
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('logs/data_extraction_unicode.log', encoding='utf-8'),
+            logging.FileHandler('agency_extraction.log', encoding='utf-8'),
             logging.StreamHandler()
         ]
     )

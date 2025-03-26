@@ -2,28 +2,18 @@ import requests
 import logging
 from urllib.parse import urlparse, urlunparse
 from config import API_KEY, HEADERS
-import json
 
 
 def normalize_api_url(url):
-
+    """Standardize API URLs and ensure proper API key inclusion"""
     try:
         parsed = urlparse(url)
-        base_domain = 'data.egov.kz'
-        valid_schemes = ['https']
-        valid_paths = ['/api/v4/', '/proxy/']
-
-        if parsed.scheme not in valid_schemes:
+        if parsed.scheme != 'https' or parsed.netloc != 'data.egov.kz':
             return None
-        if parsed.netloc != base_domain:
-            return None
-        if not any(parsed.path.startswith(p) for p in valid_paths):
+        if not any(parsed.path.startswith(p) for p in ['/api/v4/', '/proxy/']):
             return None
 
-        query = parsed.query
-        if 'apiKey=' not in query:
-            query = f"{query}&apiKey={API_KEY}" if query else f"apiKey={API_KEY}"
-
+        query = f"{parsed.query}&apiKey={API_KEY}" if parsed.query else f"apiKey={API_KEY}"
         return urlunparse((
             parsed.scheme,
             parsed.netloc,
@@ -38,6 +28,7 @@ def normalize_api_url(url):
 
 
 def fetch_api_data(url):
+    """Fetch data from API endpoint"""
     normalized_url = normalize_api_url(url)
     if not normalized_url:
         return {'status': 'error', 'error': 'Invalid URL'}
@@ -45,14 +36,13 @@ def fetch_api_data(url):
     try:
         response = requests.get(normalized_url, headers=HEADERS, timeout=15)
         response.raise_for_status()
-
         if response.encoding is None:
             response.encoding = 'utf-8'
-
         return {
             'status': 'success',
             'data': response.json(),
-            'source_url': url
+            'source_url': url,
+            'normalized_url': normalized_url
         }
     except Exception as e:
         return {

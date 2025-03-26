@@ -1,0 +1,3 @@
+﻿"code","message","source_url","api_endpoint","government_agency"
+500,"PSQLException: ERROR: query string argument of EXECUTE is null
+  Where: PL/pgSQL function data_egov.meta_json(character varying,numeric,date,character varying) line 105 at FOR over EXECUTE statement","https://data.egov.kz/proxy/gp_od_service_dtp1?apiKey=dcc32505f6134b818ec7ce60b1d5b0c6","https://data.egov.kz/proxy/gp_od_service_dtp1?apiKey=dcc32505f6134b818ec7ce60b1d5b0c6&apiKey=dcc32505f6134b818ec7ce60b1d5b0c6","Central Government Office"
