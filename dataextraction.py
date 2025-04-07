@@ -1,3 +1,4 @@
+#dataextraction.py:
 import pandas as pd
 import logging
 from tqdm import tqdm
@@ -13,24 +14,19 @@ class AgencyDatasetExtractor:
         os.makedirs(self.base_output_dir, exist_ok=True)
 
     def create_agency_folder(self, gov_agency):
-        """Create a safe folder name from government agency"""
-        # Remove special characters and replace spaces
         safe_name = re.sub(r'[^\w\s-]', '', gov_agency).strip().replace(' ', '_')
         folder_path = os.path.join(self.base_output_dir, safe_name)
         os.makedirs(folder_path, exist_ok=True)
         return folder_path
 
     def save_agency_dataset(self, data, gov_agency, source_url, normalized_url):
-        """Save dataset to its government agency folder"""
         try:
             agency_folder = self.create_agency_folder(gov_agency)
 
-            # Extract meaningful filename from URL
             endpoint = normalized_url.split('?')[0].split('/')[-1] or 'dataset'
             safe_filename = f"{endpoint[:50]}.csv".replace(' ', '_')
             output_path = os.path.join(agency_folder, safe_filename)
 
-            # Convert data to DataFrame
             if isinstance(data, list):
                 df = pd.DataFrame(data)
             elif isinstance(data, dict):
@@ -39,12 +35,10 @@ class AgencyDatasetExtractor:
                 logging.error(f"Unexpected data type: {type(data)}")
                 return False
 
-            # Add metadata columns
             df['source_url'] = source_url
             df['api_endpoint'] = normalized_url
             df['government_agency'] = gov_agency
 
-            # Save to CSV
             df.to_csv(
                 output_path,
                 index=False,
@@ -59,7 +53,6 @@ class AgencyDatasetExtractor:
             return False
 
     def process_agency_data(self, input_csv, gov_agency):
-        """Process CSV file for a specific government agency"""
         if not os.path.exists(input_csv):
             logging.error(f"Input file not found: {input_csv}")
             return False
@@ -110,7 +103,6 @@ def main():
 
     extractor = AgencyDatasetExtractor()
 
-    # Map of government agencies to their CSV files
     agencies = {
         'Local executive Organizations': 'data/byMIO.csv',
         'Central Government Organizations': 'data/byCGO.csv',

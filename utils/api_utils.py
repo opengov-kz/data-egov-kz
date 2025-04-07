@@ -5,7 +5,6 @@ from config import API_KEY, HEADERS
 
 
 def normalize_api_url(url):
-    """Standardize API URLs and ensure proper API key inclusion"""
     try:
         parsed = urlparse(url)
         if parsed.scheme != 'https' or parsed.netloc != 'data.egov.kz':
@@ -28,7 +27,6 @@ def normalize_api_url(url):
 
 
 def fetch_api_data(url):
-    """Fetch data from API endpoint"""
     normalized_url = normalize_api_url(url)
     if not normalized_url:
         return {'status': 'error', 'error': 'Invalid URL'}

@@ -1,2 +1,0 @@
-﻿"timestamp","status","error","message","path","source_url","api_endpoint","government_agency"
-"2025-03-26T11:20:01.131+00:00",500,"Internal Server Error","","/reports/json/4","https://data.egov.kz/proxy/gp_od_service_42?apiKey=dcc32505f6134b818ec7ce60b1d5b0c6","https://data.egov.kz/proxy/gp_od_service_42?apiKey=dcc32505f6134b818ec7ce60b1d5b0c6&apiKey=dcc32505f6134b818ec7ce60b1d5b0c6","Central Government Office"
