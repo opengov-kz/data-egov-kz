@@ -6,3 +6,4 @@
 
 Запуск парсера: python.exe data-egov-kz\main.py
 При перегрузке сервера (ошибка 502) chromeWebDriver перезапускается.
+

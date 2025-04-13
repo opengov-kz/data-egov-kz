@@ -1,108 +1,187 @@
+# selenium_utils.py (Fixed Version)
+import os
+import csv
+import logging
+import threading
+from datetime import time
+
+from selenium.webdriver.chrome.options import Options
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-import logging
-import selenium.common.exceptions as sel_exceptions
 from webdriver_manager.chrome import ChromeDriverManager
 
-def restart_chrome():
-    """Restart the Chrome WebDriver."""
-    try:
+from config import BASE_URL
+
+# Configuration
+CSV_COLUMNS = [
+    "Dataset URL", "Data Link", "Version Name",
+    "Version Description", "Version Owner",
+    "Categories", "Keywords", "Government Agency"
+]
+PAGE_LOAD_TIMEOUT = 20  # Increased timeout
+REQUEST_DELAY = 2  # Increased delay
+
+
+class SeleniumManager:
+    def __init__(self, max_workers=3):
+        self.driver_pool = []
+        self.lock = threading.Lock()
+        self.max_workers = max_workers
+
+    def create_driver(self):
+        """Create optimized Chrome driver instance"""
+        options = Options()
+        options.add_argument("--headless=new")  # New headless mode
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        # Network optimizations
+        prefs = {
+            "profile.default_content_setting_values.images": 2,
+            "profile.default_content_setting_values.javascript": 1,
+        }
+        options.add_experimental_option("prefs", prefs)
+
         service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service)
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
         return driver
-    except Exception as e:
-        logging.error(f"Failed to restart Chrome: {e}")
-        return None
 
-def get_data_link(driver, dataset_url, max_retries=3):
-    """Extract the data link from a dataset page with retry mechanism."""
-    retries = 0
-    while retries < max_retries:
-        try:
-            driver.get(dataset_url)
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, 'a[target="_blank"][href*="https://data.egov.kz/api/v4/"]')
-                )
-            )
-            data_link_element = driver.find_element(By.CSS_SELECTOR,
-                                                  'a[target="_blank"][href*="https://data.egov.kz/api/v4/"]')
-            return data_link_element.get_attribute('href')
+    def get_driver(self):
+        """Get driver from pool or create new"""
+        with self.lock:
+            if self.driver_pool:
+                return self.driver_pool.pop()
+            return self.create_driver()
 
-        except sel_exceptions.TimeoutException:
+    def return_driver(self, driver):
+        """Return driver to pool"""
+        with self.lock:
+            if len(self.driver_pool) < self.max_workers:
+                self.driver_pool.append(driver)
+            else:
+                driver.quit()
+
+    def cleanup(self):
+        """Cleanup all drivers"""
+        with self.lock:
+            for driver in self.driver_pool:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            self.driver_pool = []
+
+
+def process_agency_datasets(manager, agency_id, output_csv, pages=5):
+    """Process datasets for a single agency"""
+    driver = manager.get_driver()
+    try:
+        base_url = f"{BASE_URL}/datasets/search?statusType=1&govAgencyId={agency_id}"
+        print(f"\nStarting processing for agency {agency_id}")
+
+        for page in range(1, pages + 1):
+            url = f"{base_url}&page={page}"
+            print(f"Processing page {page} for {agency_id}")
+
             try:
-
-                data_link_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, "//td[a[contains(@href, 'https://data.egov.kz/proxy/')]]/a")
-                    )
+                driver.get(url)
+                # Wait for results to load
+                WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".dataset-item"))
                 )
-                return data_link_element.get_attribute('href')
+
+                # Process each dataset on the page
+                datasets = driver.find_elements(By.CSS_SELECTOR, ".dataset-item")
+                for dataset in datasets:
+                    try:
+                        dataset_url = dataset.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                        process_single_dataset(driver, dataset_url, agency_id, output_csv)
+                    except Exception as e:
+                        logging.error(f"Error processing dataset: {e}")
+
+                time.sleep(REQUEST_DELAY)
 
             except Exception as e:
-                logging.error(f"Data link not found for {dataset_url}: {e}")
-                retries += 1
-                if retries < max_retries:
-                    print(f"Retrying data link extraction for {dataset_url} (attempt {retries + 1})...")
-                    driver = restart_chrome()  # Restart Chrome and retry
-                    if not driver:
-                        return None
-                else:
-                    return None
-
-        except sel_exceptions.WebDriverException as e:
-            if "502 Bad Gateway" in str(e) or "Stacktrace" in str(e):
-                logging.error(f"Encountered error: {e}. Restarting Chrome and retrying...")
-                driver = restart_chrome()
-                if not driver:
-                    return None
-            else:
-                logging.error(f"Failed after {retries} attempts for {dataset_url}: {e}")
-                return None
-    return None
-
-def get_dataset_links(driver, base_url, gov_agency_id, max_retries=3):
-    dataset_links = []
-    current_page = 1
-
-    while True:
-        search_url = f"{base_url}/datasets/search?text=&expType=1&govAgencyId={gov_agency_id}&category=&pDateBeg=&pDateEnd=&statusType=1&actualType=&datasetSortSelect=createdDateDesc&page={current_page}"
-        try:
-            driver.get(search_url)
-            time.sleep(3)
-
-            print(f"Page source for {search_url}:")
-            print(driver.page_source[:1000])
-
-            page_links = [a.get_attribute('href') for a in
-                          driver.find_elements(By.CSS_SELECTOR, 'a[href^="/datasets/view?index="]')]
-            if not page_links:
-                print(f"No dataset links found on page {current_page} for govAgency {gov_agency_id}.")
-                break
-
-            for dataset_link in page_links:
-                print(f"Navigating to dataset: {dataset_link}")
-                data_link = get_data_link(driver, dataset_link)
-                if data_link:
-                    dataset_links.append({"Dataset URL": dataset_link, "Data Link": data_link})
-                    print(f"Extracted Data Link: {data_link}")
-                else:
-                    print(f"No data link found for {dataset_link}. Skipping...")
-
-            current_page += 1
-
-        except sel_exceptions.WebDriverException as e:
-            if "502 Bad Gateway" in str(e) or "Stacktrace" in str(e):
-                logging.error(f"Encountered error: {e}. Restarting Chrome and retrying...")
-                driver = restart_chrome()
-                if not driver:
-                    return None
-            else:
-                logging.error(f"Error processing page {current_page} for govAgency {gov_agency_id}: {e}")
+                logging.error(f"Error processing page {page}: {e}")
                 continue
 
-    return dataset_links
+    except Exception as e:
+        logging.error(f"Fatal error processing agency {agency_id}: {e}")
+    finally:
+        manager.return_driver(driver)
+    return True
+
+
+def process_single_dataset(driver, dataset_url, agency_id, output_csv):
+    """Process a single dataset"""
+    try:
+        driver.get(dataset_url)
+        WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "table.table-striped"))
+        )
+
+        # Extract metadata
+        metadata = {
+            "Dataset URL": dataset_url,
+            "Government Agency": agency_id,
+            "Version Name": extract_text(driver, "#versionName"),
+            "Version Description": extract_text(driver, "#versionDescription"),
+            "Version Owner": extract_text(driver, "#versionOwner"),
+            "Categories": extract_adjacent_text(driver, "Категории"),
+            "Keywords": extract_text(driver, "#versionKeywordsBlock"),
+            "Data Link": extract_data_link(driver)
+        }
+
+        save_to_csv(output_csv, metadata)
+        time.sleep(REQUEST_DELAY / 2)  # Shorter delay between datasets
+
+    except Exception as e:
+        logging.error(f"Error processing {dataset_url}: {e}")
+        raise
+
+
+def extract_text(driver, selector):
+    """Helper to extract text safely"""
+    try:
+        return driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+    except:
+        return ""
+
+
+def extract_adjacent_text(driver, text):
+    """Extract text from adjacent cell"""
+    try:
+        return driver.find_element(
+            By.XPATH, f"//td[contains(., '{text}')]/following-sibling::td"
+        ).text.strip()
+    except:
+        return ""
+
+
+def extract_data_link(driver):
+    """Extract data download link"""
+    try:
+        return driver.find_element(
+            By.CSS_SELECTOR, 'a[href*="api/v4/"]'
+        ).get_attribute("href")
+    except:
+        return ""
+
+
+def save_to_csv(output_csv, data_dict):
+    """Save data to CSV"""
+    try:
+        file_exists = os.path.exists(output_csv)
+        with open(output_csv, 'a', newline='', encoding='utf-8-sig') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(data_dict)
+    except Exception as e:
+        logging.error(f"CSV save error: {e}")
+        raise
