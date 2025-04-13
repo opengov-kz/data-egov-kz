@@ -1,229 +1,125 @@
-# dataextraction.py
-import pandas as pd
-import logging
 import os
-import re
-from datetime import datetime
-from pathlib import Path
-from tqdm import tqdm
 import csv
+import json
+from unidecode import unidecode
+import re
 
-from utils.api_utils import fetch_api_data
+# Configuration
+DATA_PATH = "data"  # Path to your data directory
+OUTPUT_FILE = "metadata_export.json"  # Output file name
 
 
-class DatasetExtractor:
-    def __init__(self):
-        self.output_dir = Path('extracted_datasets')
-        self.output_dir.mkdir(exist_ok=True)
-        self.error_log = self.output_dir / 'extraction_errors.csv'
-        self.setup_logging()
+def clean_keywords(keywords):
+    """Ensure keywords are properly formatted"""
+    if not keywords:
+        return []
 
-        # Initialize error log if it doesn't exist
-        if not self.error_log.exists():
-            with open(self.error_log, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    'timestamp', 'agency', 'url', 'dataset_name', 'error_type', 'error_message', 'status_code'
-                ])
-                writer.writeheader()
+    if isinstance(keywords, str):
+        keywords = re.sub(r'[\[\]\'\"]', '', keywords)
+        return [kw.strip() for kw in keywords.split(',') if kw.strip()]
+    elif isinstance(keywords, list):
+        return [str(kw).strip() for kw in keywords if kw]
+    return []
 
-    def setup_logging(self):
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(self.output_dir / 'extraction.log', encoding='utf-8'),
-                logging.StreamHandler()
-            ]
-        )
 
-    def sanitize_filename(self, name):
-        """Create safe filenames from dataset names."""
-        if not name or not isinstance(name, str):
-            return "unnamed_dataset"
+def extract_metadata_from_csv(file_path):
+    """Extract metadata from a single CSV file"""
+    try:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            first_row = next(reader, None)
 
-        # Remove special characters and limit length
-        name = re.sub(r'[^\w\-_\. ]', '', name.strip())
-        name = re.sub(r'\s+', '_', name)  # Replace spaces with underscores
-        return name[:100]  # Limit filename length
+            version_name = os.path.splitext(os.path.basename(file_path))[0]
 
-    def sanitize_agency_name(self, name):
-        """Create safe directory names for agencies."""
-        return self.sanitize_filename(name).lower()
-
-    def log_error(self, agency, url, dataset_name, error_type, error_msg, status_code=None):
-        """Log errors to CSV file."""
-        with open(self.error_log, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=[
-                'timestamp', 'agency', 'url', 'dataset_name', 'error_type', 'error_message', 'status_code'
-            ])
-            writer.writerow({
-                'timestamp': datetime.now().isoformat(),
-                'agency': agency,
-                'url': url,
-                'dataset_name': dataset_name,
-                'error_type': error_type,
-                'error_message': error_msg[:500],  # Limit message length
-                'status_code': status_code
-            })
-
-    def save_dataset(self, data, dataset_name, agency_name):
-        """Save dataset using the name from source CSV."""
-        try:
-            # Create filename from source dataset name
-            safe_name = self.sanitize_filename(dataset_name)
-            filename = f"{safe_name}.csv"
-            agency_dir = self.output_dir / self.sanitize_agency_name(agency_name)
-            agency_dir.mkdir(exist_ok=True)
-            filepath = agency_dir / filename
-
-            # Convert data to DataFrame
-            if isinstance(data, dict):
-                df = pd.DataFrame([data])
-            elif isinstance(data, list):
-                df = pd.DataFrame(data)
-            else:
-                logging.error(f"Unsupported data type: {type(data)}")
-                return False
-
-            # Check if DataFrame contains actual data
-            if len(df) == 0 or all(col.startswith(('version_', 'api_', 'extraction_')) for col in df.columns):
-                logging.warning(f"Skipping empty dataset: {dataset_name}")
-                return False
-
-            # Save to CSV
-            df.to_csv(
-                filepath,
-                index=False,
-                encoding='utf-8-sig',
-                quoting=csv.QUOTE_NONNUMERIC
-            )
-            logging.info(f"Saved dataset to {filepath}")
-            return True
-
-        except Exception as e:
-            logging.error(f"Failed to save dataset {dataset_name}: {str(e)}")
-            return False
-
-    def process_agency_data(self, input_csv, agency_name):
-        """Process all datasets using names from source CSV."""
-        if not Path(input_csv).exists():
-            logging.error(f"Input file not found: {input_csv}")
-            return False
-
-        try:
-            df = pd.read_csv(input_csv)
-
-            # Check required columns
-            required_columns = {'Data Link', 'Version Name'}
-            if not required_columns.issubset(df.columns):
-                missing = required_columns - set(df.columns)
-                logging.error(f"CSV file missing required columns: {missing}")
-                return False
-
-            stats = {
-                'total': 0,
-                'success': 0,
-                'invalid_url': 0,
-                'api_error': 0,
-                'empty_response': 0,
-                'save_failed': 0
+            # Default values
+            metadata = {
+                'version_name': version_name,
+                'version_description': f"Данные: {version_name}",
+                'version_keywords': [],
+                'source_file': os.path.basename(file_path)
             }
 
-            with tqdm(df.iterrows(), total=len(df), desc=f"Processing {agency_name}") as pbar:
-                for _, row in pbar:
-                    stats['total'] += 1
-                    url = row['Data Link']
-                    dataset_name = row['Version Name']
+            if first_row:
+                if 'version_description' in first_row and first_row['version_description'].strip():
+                    metadata['version_description'] = first_row['version_description'].strip()
 
-                    # Skip invalid URLs
-                    if pd.isna(url) or not str(url).startswith('http'):
-                        stats['invalid_url'] += 1
-                        self.log_error(
-                            agency_name, str(url), dataset_name,
-                            'invalid_url', 'Missing or invalid URL'
-                        )
+                if 'version_keywords' in first_row and first_row['version_keywords'].strip():
+                    metadata['version_keywords'] = clean_keywords(first_row['version_keywords'])
+
+            return metadata
+
+    except Exception as e:
+        print(f"Error processing {file_path}: {str(e)}")
+        return {
+            'version_name': os.path.splitext(os.path.basename(file_path))[0],
+            'version_description': f"Данные: {os.path.splitext(os.path.basename(file_path))[0]}",
+            'version_keywords': [],
+            'source_file': os.path.basename(file_path)
+        }
+
+
+def process_all_files():
+    """Process all CSV files in the data directory"""
+    all_metadata = {}
+
+    target_files = ['byMIO.csv', 'byCGO.csv', 'byQuasiOrg.csv']
+
+    for file_name in target_files:
+        file_path = os.path.join(DATA_PATH, file_name)
+        if not os.path.exists(file_path):
+            print(f"Warning: File not found - {file_path}")
+            continue
+
+        print(f"Processing file: {file_name}")
+
+        try:
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if 'Data Link' not in row:
                         continue
 
-                    # Fetch API data
-                    result = fetch_api_data(url)
+                    version_name = os.path.basename(row['Data Link']).split('/')[-1]
+                    if '.' in version_name:
+                        version_name = version_name.split('.')[0]
 
-                    # Skip empty/invalid responses
-                    if result.get('is_empty', False):
-                        stats['empty_response'] += 1
-                        self.log_error(
-                            agency_name, url, dataset_name,
-                            'empty_response',
-                            result.get('error', 'Empty response'),
-                            result.get('status_code')
-                        )
-                        continue
+                    metadata = {
+                        'version_name': version_name,
+                        'version_description': row.get('version_description', f"Данные: {version_name}"),
+                        'version_keywords': clean_keywords(row.get('version_keywords', '')),
+                        'source_file': file_name,
+                        'Data Link': row['Data Link']
+                    }
 
-                    # Handle API errors
-                    if result['status'] != 'success':
-                        stats['api_error'] += 1
-                        self.log_error(
-                            agency_name, url, dataset_name,
-                            'api_error',
-                            result.get('error', 'Unknown API error'),
-                            result.get('status_code')
-                        )
-                        continue
-
-                    # Save dataset using name from source CSV
-                    if not self.save_dataset(result['data'], dataset_name, agency_name):
-                        stats['save_failed'] += 1
-                        self.log_error(
-                            agency_name, url, dataset_name,
-                            'save_failed', 'Failed to save dataset'
-                        )
-                        continue
-
-                    stats['success'] += 1
-
-            # Print summary
-            logging.info(f"\nProcessing summary for {agency_name}:")
-            for stat, count in stats.items():
-                logging.info(f"  {stat.replace('_', ' ').title()}: {count}")
-
-            return stats['success'] > 0
+                    all_metadata[version_name] = metadata
 
         except Exception as e:
-            logging.error(f"Error processing {agency_name}: {str(e)}")
-            return False
+            print(f"Error processing {file_name}: {str(e)}")
+
+    return all_metadata
+
+
+def save_metadata_to_file(metadata, output_file):
+    """Save metadata to JSON file"""
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    print(f"\nMetadata saved to {output_file}")
 
 
 def main():
-    extractor = DatasetExtractor()
-    agencies = {
-        'local_executive': 'data/byMIO.csv',
-        'Central_Government': 'data/byCGO.csv',
-        'Quasi_Government': 'data/byQuasiOrg.csv'
-    }
+    if not os.path.exists(DATA_PATH):
+        print(f"Error: Data directory not found: {DATA_PATH}")
+        return
 
-    print("Kazakhstan Government Data Extractor")
-    print("-----------------------------------")
+    print("Starting metadata extraction...")
+    metadata = process_all_files()
+    save_metadata_to_file(metadata, OUTPUT_FILE)
 
-    while True:
-        print("\nSelect agency to process:")
-        for i, (name, _) in enumerate(agencies.items(), 1):
-            print(f"{i}. {name.replace('_', ' ')}")
-        print(f"{len(agencies) + 1}. Exit")
-
-        try:
-            choice = int(input("Enter choice (1-4): "))
-            if choice == len(agencies) + 1:
-                break
-            elif 1 <= choice <= len(agencies):
-                agency = list(agencies.keys())[choice - 1]
-                if extractor.process_agency_data(agencies[agency], agency):
-                    print(f"\nSuccessfully processed {agency.replace('_', ' ')} datasets")
-                else:
-                    print(f"\nThere were issues processing {agency.replace('_', ' ')} - check logs")
-            else:
-                print("Invalid choice, please try again")
-        except ValueError:
-            print("Please enter a number")
+    # Print summary
+    print("\nExtraction complete!")
+    print(f"Total datasets processed: {len(metadata)}")
+    print(f"Output file: {os.path.abspath(OUTPUT_FILE)}")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
