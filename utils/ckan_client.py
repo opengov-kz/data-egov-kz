@@ -1,6 +1,11 @@
+#ckan_client.py:
 import os
 import requests
 import json
+
+from IPython.core.release import author, author_email
+from torch.fx.experimental.unification.multipledispatch.dispatcher import source
+
 from utils.ckan_utils import clean_keywords, generate_valid_ckan_id
 from config import OPENGOV_API_KEY, CKAN_BASE_URL
 from utils.helpers import slugify
@@ -40,7 +45,7 @@ class CKANClient:
             self.last_error = {'exception': str(e)}
             return None
 
-    def create_dataset(self, name, title, owner_org, description, tags):
+    def create_dataset(self, name, title, owner_org, source_url , author_, authoremail, description, tags):
         ckan_id = generate_valid_ckan_id(f"{owner_org}/{name}.csv")
         if self.dataset_exists(ckan_id):
             print(f"⚠️ Dataset exists: {ckan_id}")
@@ -50,6 +55,9 @@ class CKANClient:
             "name": ckan_id,
             "title": title[:200],
             "owner_org": owner_org,
+            "url":source_url,
+            "author": author_,
+            "author_email": authoremail,
             "notes": description[:2000],
             "tags": [{"name": kw} for kw in clean_keywords(tags)[:30]],
             "license_id": "cc-by",

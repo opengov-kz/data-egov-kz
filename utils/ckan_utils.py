@@ -1,3 +1,4 @@
+#cakn_utils.py:
 import os
 import re
 from unidecode import unidecode
@@ -29,7 +30,6 @@ def generate_valid_ckan_id(filename):
     ascii_name = unidecode(base).lower()
     clean = re.sub(r'[^a-z0-9\-]+', '-', ascii_name).strip('-')
 
-    # Preserve numeric prefixes (e.g., "119_")
     num_prefix = ''
     if match := re.match(r'^(\d+)[_\-]', base):
         num_prefix = f"{match.group(1)}-"

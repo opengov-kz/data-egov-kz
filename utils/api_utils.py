@@ -12,7 +12,6 @@ def sanitize_filename(name):
     if not name or not isinstance(name, str):
         return "unnamed_dataset"
 
-    # Remove special characters and limit length
     name = re.sub(r'[^\w\-_\. ]', '', name.strip())[:100]
     return name.replace(' ', '_')
 
@@ -23,10 +22,9 @@ def is_valid_response(data):
         return False
 
     if isinstance(data, dict):
-        # Check if it's an error response
+
         if 'error' in data or 'status' in data and data['status'] != 'success':
             return False
-        # Check if it contains actual data (not just metadata)
         return len(data) > sum(1 for k in data if k.startswith(('version_', 'api_', 'extraction_')))
 
     if isinstance(data, list):
@@ -59,16 +57,13 @@ def normalize_api_url(url):
 
         parsed = urlparse(url)
 
-        # Validate domain
         if not parsed.netloc.endswith(('data.egov.kz', 'egov.kz')):
             logging.warning(f"Unsupported domain: {parsed.netloc}")
             return None
 
-        # Process query parameters
         query_params = parse_qs(parsed.query)
         query_params['apiKey'] = [API_KEY]  # Force our API key
 
-        # Rebuild URL
         normalized_url = urlunparse((
             'https',  # Force HTTPS
             'data.egov.kz',  # Standard domain
@@ -103,7 +98,6 @@ def fetch_api_data(url):
             verify=True
         )
 
-        # Handle HTTP errors
         if response.status_code != 200:
             error_msg = f"HTTP {response.status_code}"
             if response.text:
@@ -123,7 +117,6 @@ def fetch_api_data(url):
                 'is_empty': response.status_code == 404  # Mark 404s as empty
             }
 
-        # Parse JSON response
         try:
             data = response.json()
         except ValueError as e:
@@ -135,7 +128,6 @@ def fetch_api_data(url):
                 'is_empty': True
             }
 
-        # Check for empty or invalid data
         if not is_valid_response(data):
             return {
                 'status': 'error',
@@ -145,7 +137,6 @@ def fetch_api_data(url):
                 'is_empty': True
             }
 
-        # Extract version name safely
         version_name = sanitize_filename(
             response.headers.get('X-Version-Name') or
             get_nested_value(data, 'version_name') or
@@ -153,7 +144,6 @@ def fetch_api_data(url):
             url.split('/')[-1].split('?')[0]
         )
 
-        # Prepare metadata
         metadata = {
             'version_name': version_name,
             'version_description':
@@ -169,7 +159,6 @@ def fetch_api_data(url):
             'source_url': url
         }
 
-        # Add metadata to response
         if isinstance(data, dict):
             data.update(metadata)
         elif isinstance(data, list) and data and isinstance(data[0], dict):

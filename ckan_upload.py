@@ -1,70 +1,101 @@
 import os
 import csv
-from datetime import datetime
+import json
+
+from IPython.core.release import author
+
 from utils.ckan_client import CKANClient
 from utils.ckan_utils import clean_keywords, generate_valid_ckan_id
-from utils.helpers import load_metadata_reference_files, normalize_url
+from utils.helpers import normalize_url
 
 DATASETS_PATH = "extracted_datasets"
-DETAILS_CSV_PATH = "tools/details.csv"
 
 
-def load_details_reference():
-    details_ref = {}
-    if os.path.exists(DETAILS_CSV_PATH):
-        with open(DETAILS_CSV_PATH, 'r', encoding='utf-8-sig') as f:
-            for row in csv.DictReader(f):
-                if url := row.get('Data Link'):
-                    details_ref[normalize_url(url)] = {
-                        'version_description': row.get('Version Description', ''),
-                        'version_keywords': row.get('Keywords', '')
+def load_metadata_from_json(agency_id, dataset_name):
+    import glob
+
+    metadata_path = os.path.join("metadata_json", agency_id)
+    if not os.path.exists(metadata_path):
+        return None
+
+    normalized_name = dataset_name.lower()
+    for file in glob.glob(os.path.join(metadata_path, "*.json")):
+        if normalized_name in os.path.basename(file).lower():
+            with open(file, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                    return {
+                        "title": data.get("title") or dataset_name,
+                        "description": data.get("description", ""),
+                        "keywords": data.get("keywords") or [],
+                        "owner": data.get("version_owner") or agency_id
                     }
-    return details_ref
+                except json.JSONDecodeError:
+                    print(f"❌ Could not decode JSON in {file}")
+    return None
 
+
+def load_json_metadata(org_name, dataset_name):
+    json_path = os.path.join("results/metadata", f"{dataset_name}.json")
+    if not os.path.exists(json_path):
+        print(f"⚠️ Metadata JSON not found: {json_path}")
+        return {}
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 def extract_csv_metadata(file_path, org_name):
-    try:
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            first_row = next(reader, None)
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            source_url = first_row.get('source_url', '') if first_row else ''
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    metadata_json = load_json_metadata(org_name, base_name)
 
-            metadata = {
-                'base_name': base_name,
-                'source_url': source_url,
-                'version_description': f"Данные: {base_name}",
-                'version_keywords': ['government-data'],
-                'metadata_source': 'defaults'
-            }
+    # Default fallback
+    url = ""
+    meta_link = ""
 
-            # Check details.csv first
-            if source_url and (details := load_details_reference().get(normalize_url(source_url))):
-                metadata.update({
-                    'version_description': details.get('version_description', metadata['version_description']),
-                    'version_keywords': clean_keywords(details.get('version_keywords', '')),
-                    'metadata_source': 'details_csv'
-                })
+    org_map = {
+        "local_executive": "data/byMIO.csv",
+        "central_government": "data/byCGO.csv",
+        "quasi_government": "data/byQuasiOrg.csv",
+    }
 
-            # Fallback to CSV values
-            if metadata['metadata_source'] == 'defaults' and first_row:
-                if first_row.get('version_description'):
-                    metadata['version_description'] = first_row['version_description']
-                    metadata['metadata_source'] = 'csv_file'
-                if first_row.get('version_keywords'):
-                    metadata['version_keywords'] = clean_keywords(first_row['version_keywords'])
+    normalized_org = org_name.strip().lower().replace(" ", "_")
+    metadata_csv_path = org_map.get(normalized_org)
 
-            print(f"  🔍 Metadata: {metadata['version_description'][:60]}...")
-            print(f"  📌 Keywords: {metadata['version_keywords'][:3]}")
-            return metadata
+    if metadata_csv_path and os.path.exists(metadata_csv_path):
+        try:
+            with open(metadata_csv_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    version_name = row.get('Version Name', '').strip().lower()
+                    if version_name == base_name.lower():
+                        url = row.get('Data Url', '')
+                        meta_link = row.get('Meta Link', '')
+                        break
+                else:
+                    print(f"⚠️ No matching 'Version Name' found for '{base_name}' in {metadata_csv_path}")
+        except Exception as e:
+            print(f"⚠️ Error reading metadata CSV ({metadata_csv_path}): {e}")
+    else:
+        print(f"⚠️ Metadata CSV not found for org: {org_name}")
 
-    except Exception as e:
-        print(f"❌ Metadata error: {str(e)}")
-        return {
-            'base_name': os.path.splitext(os.path.basename(file_path))[0],
-            'version_description': f"Данные: {os.path.splitext(os.path.basename(file_path))[0]}",
-            'version_keywords': ['government-data']
-        }
+    metadata = {
+        'base_name': base_name,
+        'url': url,
+        'meta_link': meta_link,
+        'version_description': metadata_json.get('descriptionRu', '') + "\n" + metadata_json.get('descriptionKk', ''),
+        'version_keywords': clean_keywords(metadata_json.get('keywords', '')),
+        'organization': metadata_json.get('owner', {}).get('fullnameRu', org_name),
+        'author_': metadata_json.get('responsible', {}).get('fullnameRu', ''),
+        'author_email': metadata_json.get('responsible', {}).get('email', ''),
+        'metadata_source': 'json_metadata'
+    }
+
+    print(f"  📝 Description: {metadata['version_description'][:60]}...")
+    print(f"  👤 Author: {metadata['author_']} ({metadata['author_email']})")
+    print(f"  🔗 Source: {metadata['url']}")
+    print(f"  🧷 Meta Link: {metadata['meta_link']}")
+    print(f"  📌 Tags: {metadata['version_keywords'][:3]}")
+
+    return metadata
 
 
 def process_organization(client, org_name):
@@ -85,7 +116,10 @@ def process_organization(client, org_name):
 
         if verified_id := client.create_dataset(
                 name=dataset_id,
+                source_url=metadata['url'],
                 title=metadata['base_name'],
+                author_=metadata['author_'],
+                authoremail=metadata['author_email'],
                 owner_org=org_id,
                 description=metadata['version_description'],
                 tags=metadata['version_keywords']
@@ -93,7 +127,8 @@ def process_organization(client, org_name):
             client.upload_resource(
                 dataset_id=verified_id,
                 file_path=file_path,
-                file_name=file
+                file_name=file,
+                description=f"Источник: {metadata['url']} \nАвтор: {metadata['author_']} ({metadata['author_email']})"
             )
 
     return True
