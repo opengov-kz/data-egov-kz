@@ -41,10 +41,7 @@ class DatasetExtractor:
         if not name or not isinstance(name, str):
             return "unnamed_dataset"
 
-        # Remove special characters and limit length
-        name = re.sub(r'[^\w\-_\. ]', '', name.strip())
-        name = re.sub(r'\s+', ' ', name)  # Replace spaces with underscores
-        return name[:100]  # Limit filename length
+        return name  # Limit filename length
 
     def sanitize_agency_name(self, name):
         """Create safe directory names for agencies."""
@@ -103,6 +100,7 @@ class DatasetExtractor:
         except Exception as e:
             logging.error(f"Failed to save dataset {dataset_name}: {str(e)}")
             return False
+
 
     def process_agency_data(self, input_csv, agency_name):
         """Process all datasets using names from source CSV."""

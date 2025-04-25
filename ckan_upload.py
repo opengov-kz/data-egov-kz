@@ -1,8 +1,7 @@
 import os
 import csv
 import json
-
-from IPython.core.release import author
+import glob
 
 from utils.ckan_client import CKANClient
 from utils.ckan_utils import clean_keywords, generate_valid_ckan_id
@@ -12,8 +11,6 @@ DATASETS_PATH = "extracted_datasets"
 
 
 def load_metadata_from_json(agency_id, dataset_name):
-    import glob
-
     metadata_path = os.path.join("metadata_json", agency_id)
     if not os.path.exists(metadata_path):
         return None
@@ -43,11 +40,11 @@ def load_json_metadata(org_name, dataset_name):
     with open(json_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+
 def extract_csv_metadata(file_path, org_name):
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     metadata_json = load_json_metadata(org_name, base_name)
 
-    # Default fallback
     url = ""
     meta_link = ""
 
@@ -66,9 +63,9 @@ def extract_csv_metadata(file_path, org_name):
                 reader = csv.DictReader(csvfile)
                 for row in reader:
                     version_name = row.get('Version Name', '').strip().lower()
-                    if version_name == base_name.lower():
-                        url = row.get('Data Url', '')
-                        meta_link = row.get('Meta Link', '')
+                    if base_name.lower() in version_name or version_name.startswith(base_name.lower()):
+                        url = normalize_url(row.get('Data Link', ''))
+                        meta_link = normalize_url(row.get('Meta Link', ''))
                         break
                 else:
                     print(f"⚠️ No matching 'Version Name' found for '{base_name}' in {metadata_csv_path}")
@@ -101,29 +98,38 @@ def extract_csv_metadata(file_path, org_name):
 def process_organization(client, org_name):
     org_path = os.path.join(DATASETS_PATH, org_name)
     if not os.path.isdir(org_path):
+        print(f"❌ No dataset directory found for {org_name}")
         return False
 
     org_id = client.get_or_create_organization(org_name)
     if not org_id:
+        print(f"❌ Could not create or retrieve organization: {org_name}")
         return False
 
-    for file in [f for f in os.listdir(org_path) if f.endswith(".csv")]:
+    csv_files = [f for f in os.listdir(org_path) if f.endswith(".csv")]
+    if not csv_files:
+        print(f"⚠️ No CSV files found in {org_path}")
+        return False
+
+    for file in csv_files:
         file_path = os.path.join(org_path, file)
         print(f"\n📄 Processing: {file}")
 
         metadata = extract_csv_metadata(file_path, org_name)
         dataset_id = generate_valid_ckan_id(file_path)
 
-        if verified_id := client.create_dataset(
-                name=dataset_id,
-                source_url=metadata['url'],
-                title=metadata['base_name'],
-                author_=metadata['author_'],
-                authoremail=metadata['author_email'],
-                owner_org=org_id,
-                description=metadata['version_description'],
-                tags=metadata['version_keywords']
-        ):
+        verified_id = client.create_dataset(
+            name=dataset_id,
+            source_url=metadata['url'],
+            title=metadata['base_name'],
+            author_=metadata['author_'],
+            authoremail=metadata['author_email'],
+            owner_org=org_id,
+            description=metadata['version_description'],
+            tags=metadata['version_keywords']
+        )
+
+        if verified_id:
             client.upload_resource(
                 dataset_id=verified_id,
                 file_path=file_path,
