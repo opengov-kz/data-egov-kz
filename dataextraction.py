@@ -67,8 +67,8 @@ class DatasetExtractor:
         """Save dataset using the name from source CSV."""
         try:
             # Create filename from source dataset name
-            safe_name = self.sanitize_filename(dataset_name)
-            filename = f"{safe_name}.csv"
+            #safe_name = self.sanitize_filename(dataset_name)
+            filename = f"{dataset_name}.csv"
             agency_dir = self.output_dir / self.sanitize_agency_name(agency_name)
             agency_dir.mkdir(exist_ok=True)
             filepath = agency_dir / filename

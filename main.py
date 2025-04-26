@@ -147,9 +147,9 @@ def main():
         return
 
     datasets = {
-        CGO_DATASOURCE: "data/byCGO.csv",
-        MIO_DATASOURCE: "data/byMIO.csv",
-        #QUASIORG_DATASOURCE: "data/byQuasiOrg.csv"
+        #CGO_DATASOURCE: "data/byCGO.csv",
+        #MIO_DATASOURCE: "data/byMIO.csv",
+        QUASIORG_DATASOURCE: "data/byQuasiOrg.csv"
     }
 
     for json_file, csv_path in datasets.items():

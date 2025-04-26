@@ -2,12 +2,21 @@ import os
 import csv
 import json
 import glob
+import re
 
 from utils.ckan_client import CKANClient
 from utils.ckan_utils import clean_keywords, generate_valid_ckan_id
 from utils.helpers import normalize_url
 
 DATASETS_PATH = "extracted_datasets"
+
+def detect_encoding(file_path):
+    with open(file_path, 'rb') as f:
+        raw = f.read(4)
+        if raw.startswith(b'\xef\xbb\xbf'):
+            return 'utf-8-sig'  # BOM detected
+        else:
+            return 'utf-8'  # No BOM
 
 
 def load_metadata_from_json(agency_id, dataset_name):
@@ -56,16 +65,23 @@ def extract_csv_metadata(file_path, org_name):
 
     normalized_org = org_name.strip().lower().replace(" ", "_")
     metadata_csv_path = org_map.get(normalized_org)
+    # Determine encoding based on organization
+    encoding = 'utf-8-sig' if normalized_org == 'central_government' else 'utf-8'
 
     if metadata_csv_path and os.path.exists(metadata_csv_path):
         try:
-            with open(metadata_csv_path, 'r', encoding='utf-8') as csvfile:
+            encoding = detect_encoding(metadata_csv_path)  # 👈 Auto detect here
+            with open(metadata_csv_path, 'r', encoding=encoding) as csvfile:
                 reader = csv.DictReader(csvfile)
+                print(f"🔎 CSV Headers: {reader.fieldnames}")  # Debugging
                 for row in reader:
-                    version_name = row.get('Version Name', '').strip().lower()
-                    if base_name.lower() in version_name or version_name.startswith(base_name.lower()):
+                    version_name = row.get('Version Name', '').strip()
+                    if not version_name:
+                        continue
+                    if base_name.lower() in version_name.lower():
                         url = normalize_url(row.get('Data Link', ''))
                         meta_link = normalize_url(row.get('Meta Link', ''))
+                        print(f"✅ Found match: {version_name}")
                         break
                 else:
                     print(f"⚠️ No matching 'Version Name' found for '{base_name}' in {metadata_csv_path}")
