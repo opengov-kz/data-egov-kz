@@ -1,3 +1,4 @@
+# ckan_upload.py
 import os
 import csv
 import json
@@ -14,10 +15,9 @@ def detect_encoding(file_path):
     with open(file_path, 'rb') as f:
         raw = f.read(4)
         if raw.startswith(b'\xef\xbb\xbf'):
-            return 'utf-8-sig'  # BOM detected
+            return 'utf-8-sig'
         else:
-            return 'utf-8'  # No BOM
-
+            return 'utf-8'
 
 def load_metadata_from_json(agency_id, dataset_name):
     metadata_path = os.path.join("metadata_json", agency_id)
@@ -30,16 +30,23 @@ def load_metadata_from_json(agency_id, dataset_name):
             with open(file, "r", encoding="utf-8") as f:
                 try:
                     data = json.load(f)
+                    owner = data.get("owner", {})
+                    org_name = (
+                        owner.get("fullnameRu") or
+                        owner.get("nameRu") or
+                        owner.get("shortNameRu") or
+                        owner.get("nameEn") or
+                        owner.get("shortNameEn")
+                    )
                     return {
                         "title": data.get("title") or dataset_name,
                         "description": data.get("description", ""),
                         "keywords": data.get("keywords") or [],
-                        "owner": data.get("version_owner") or agency_id
+                        "owner_org_name": org_name or agency_id
                     }
                 except json.JSONDecodeError:
                     print(f"❌ Could not decode JSON in {file}")
     return None
-
 
 def load_json_metadata(org_name, dataset_name):
     json_path = os.path.join("results/metadata", f"{dataset_name}.json")
@@ -48,7 +55,6 @@ def load_json_metadata(org_name, dataset_name):
         return {}
     with open(json_path, 'r', encoding='utf-8') as f:
         return json.load(f)
-
 
 def extract_csv_metadata(file_path, org_name):
     base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -65,30 +71,32 @@ def extract_csv_metadata(file_path, org_name):
 
     normalized_org = org_name.strip().lower().replace(" ", "_")
     metadata_csv_path = org_map.get(normalized_org)
-    # Determine encoding based on organization
-    encoding = 'utf-8-sig' if normalized_org == 'central_government' else 'utf-8'
+    encoding = 'utf-8'
 
     if metadata_csv_path and os.path.exists(metadata_csv_path):
         try:
-            encoding = detect_encoding(metadata_csv_path)  # 👈 Auto detect here
+            encoding = detect_encoding(metadata_csv_path)
             with open(metadata_csv_path, 'r', encoding=encoding) as csvfile:
                 reader = csv.DictReader(csvfile)
-                print(f"🔎 CSV Headers: {reader.fieldnames}")  # Debugging
+                print(f"🔎 CSV Headers: {reader.fieldnames}")
                 for row in reader:
                     version_name = row.get('Version Name', '').strip()
-                    if not version_name:
-                        continue
                     if base_name.lower() in version_name.lower():
-                        url = normalize_url(row.get('Data Link', ''))
-                        meta_link = normalize_url(row.get('Meta Link', ''))
+                        url = row.get('Data Url', '')
+                        meta_link = row.get('Meta Link', '')
                         print(f"✅ Found match: {version_name}")
                         break
-                else:
-                    print(f"⚠️ No matching 'Version Name' found for '{base_name}' in {metadata_csv_path}")
         except Exception as e:
             print(f"⚠️ Error reading metadata CSV ({metadata_csv_path}): {e}")
-    else:
-        print(f"⚠️ Metadata CSV not found for org: {org_name}")
+
+    owner_info = metadata_json.get('owner', {})
+    organization_name = (
+        owner_info.get('fullnameRu') or
+        owner_info.get('nameRu') or
+        owner_info.get('fullnameEn') or
+        owner_info.get('nameEn') or
+        org_name
+    )
 
     metadata = {
         'base_name': base_name,
@@ -96,30 +104,25 @@ def extract_csv_metadata(file_path, org_name):
         'meta_link': meta_link,
         'version_description': metadata_json.get('descriptionRu', '') + "\n" + metadata_json.get('descriptionKk', ''),
         'version_keywords': clean_keywords(metadata_json.get('keywords', '')),
-        'organization': metadata_json.get('owner', {}).get('fullnameRu', org_name),
-        'author_': metadata_json.get('responsible', {}).get('fullnameRu', ''),
-        'author_email': metadata_json.get('responsible', {}).get('email', ''),
+        'organization': organization_name,
+        'author': metadata_json.get('responsible', {}).get('fullnameRu', ''),
+        'authoremail': metadata_json.get('responsible', {}).get('email', ''),
         'metadata_source': 'json_metadata'
     }
 
     print(f"  📝 Description: {metadata['version_description'][:60]}...")
-    print(f"  👤 Author: {metadata['author_']} ({metadata['author_email']})")
+    print(f"  👤 Author: {metadata['author']} ({metadata['authoremail']})")
+    print(f"  🏛️ Organization: {metadata['organization']}")
     print(f"  🔗 Source: {metadata['url']}")
     print(f"  🧷 Meta Link: {metadata['meta_link']}")
     print(f"  📌 Tags: {metadata['version_keywords'][:3]}")
 
     return metadata
 
-
 def process_organization(client, org_name):
     org_path = os.path.join(DATASETS_PATH, org_name)
     if not os.path.isdir(org_path):
         print(f"❌ No dataset directory found for {org_name}")
-        return False
-
-    org_id = client.get_or_create_organization(org_name)
-    if not org_id:
-        print(f"❌ Could not create or retrieve organization: {org_name}")
         return False
 
     csv_files = [f for f in os.listdir(org_path) if f.endswith(".csv")]
@@ -132,17 +135,30 @@ def process_organization(client, org_name):
         print(f"\n📄 Processing: {file}")
 
         metadata = extract_csv_metadata(file_path, org_name)
-        dataset_id = generate_valid_ckan_id(file_path)
+        if not metadata:
+            print(f"⚠️ Failed to extract metadata for {file}")
+            continue
 
+        org_id = client.get_or_create_organization(metadata.get('organization', org_name))
+        if not org_id:
+            print(f"❌ Could not create or retrieve organization: {metadata.get('organization', org_name)}")
+            continue
+
+        dataset_id = generate_valid_ckan_id(file_path)
         verified_id = client.create_dataset(
             name=dataset_id,
-            source_url=metadata['url'],
-            title=metadata['base_name'],
-            author_=metadata['author_'],
-            authoremail=metadata['author_email'],
+            title=metadata.get('base_name', dataset_id),
             owner_org=org_id,
-            description=metadata['version_description'],
-            tags=metadata['version_keywords']
+            author=metadata.get('author', 'Unknown'),
+            authoremail=metadata.get('authoremail', 'unknown@example.com'),
+            notes=metadata.get('version_description', ''),
+            tags=metadata.get('version_keywords', []),
+            url=metadata.get('url', ''),
+            extras=[
+                {"key": "Ссылка на мета данные", "value": metadata.get("meta_link", "")},
+                {"key": "Author Email", "value": metadata.get("authoremail", "")}
+            ]
+
         )
 
         if verified_id:
@@ -150,30 +166,55 @@ def process_organization(client, org_name):
                 dataset_id=verified_id,
                 file_path=file_path,
                 file_name=file,
-                description=f"Источник: {metadata['url']} \nАвтор: {metadata['author_']} ({metadata['author_email']})"
+                description=f"Источник: {metadata.get('url', '')} \nАвтор: {metadata.get('author', 'Unknown')} ({metadata.get('authoremail', '')})"
             )
 
     return True
 
-
 def main():
-    client = CKANClient()
-    print("\n🚀 CKAN Dataset Upload Processor")
+    while True:
+        client = CKANClient()
+        print("\nCKAN Dataset Upload Processor")
 
-    orgs = [d for d in os.listdir(DATASETS_PATH) if os.path.isdir(os.path.join(DATASETS_PATH, d))]
-    if not orgs:
-        print("❌ No organizations found")
-        return
+        orgs = [d for d in os.listdir(DATASETS_PATH) if os.path.isdir(os.path.join(DATASETS_PATH, d))]
+        if not orgs:
+            print("❌ No organizations found")
+            return
 
-    for i, org in enumerate(orgs, 1):
-        print(f"{i}. {org}")
-    selection = input("\nSelect organizations (comma-separated): ")
+        print("\n0. Delete datasets from selected organization")
+        for i, org in enumerate(orgs, 1):
+            print(f"{i}. {org}")
 
-    selected_orgs = [orgs[int(num) - 1] for num in selection.split(',') if num.isdigit() and 0 < int(num) <= len(orgs)]
-    for org in selected_orgs:
-        print(f"\n=== Processing: {org} ===")
-        process_organization(client, org)
+        selection = input("\nSelect organizations (comma-separated), or '0' to delete from an organization: ").strip()
 
+        if selection == "0":
+            for i, org in enumerate(orgs, 1):
+                print(f"{i}. {org}")
+            org_selection = input("\nSelect organization number to delete its datasets: ").strip()
+            if org_selection.isdigit() and 0 < int(org_selection) <= len(orgs):
+                org_name = orgs[int(org_selection) - 1]
+                sample_files = os.listdir(os.path.join(DATASETS_PATH, org_name))
+                sample_csv = next((f for f in sample_files if f.endswith('.csv')), None)
+                if sample_csv:
+                    dataset_name = os.path.splitext(sample_csv)[0]
+                    metadata = load_metadata_from_json(org_name, dataset_name)
+                    owner_org_name = metadata.get("owner_org_name", org_name) if metadata else org_name
+                    owner_org_id = client.get_or_create_organization(owner_org_name)
+                    confirm = input(f"Are you sure you want to DELETE all datasets from '{owner_org_name}'? Type 'YES' to confirm: ")
+                    if confirm.strip().upper() == "YES":
+                        client.delete_datasets_by_organization(owner_org_id)
+                    else:
+                        print("Deletion cancelled.")
+                else:
+                    print("❌ No CSV files found.")
+            else:
+                print("Invalid selection.")
+            continue
+
+        selected_orgs = [orgs[int(num) - 1] for num in selection.split(',') if num.isdigit() and 0 < int(num) <= len(orgs)]
+        for org in selected_orgs:
+            print(f"\n=== Processing: {org} ===")
+            process_organization(client, org)
 
 if __name__ == '__main__':
     main()
